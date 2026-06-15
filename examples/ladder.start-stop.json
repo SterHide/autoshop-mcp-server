@@ -1,0 +1,24 @@
+{
+  "programName": "MainStartStop",
+  "includeEquivalentSt": true,
+  "rungs": [
+    {
+      "name": "Motor seal-in",
+      "comment": "Start/stop latch for a motor",
+      "elements": [
+        { "kind": "contact_no", "tag": "StartButton" },
+        { "kind": "contact_nc", "tag": "StopButton" },
+        { "kind": "contact_nc", "tag": "FaultActive" },
+        { "kind": "coil", "target": "MotorRun" }
+      ]
+    },
+    {
+      "name": "Fault reset",
+      "comment": "Drop output when fault is present",
+      "elements": [
+        { "kind": "contact_no", "tag": "FaultActive" },
+        { "kind": "reset_coil", "target": "MotorRun" }
+      ]
+    }
+  ]
+}

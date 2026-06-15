@@ -1,0 +1,30 @@
+[
+  {
+    "name": "StartButton",
+    "area": "coil",
+    "address": 0,
+    "dataType": "bool",
+    "comment": "Start command"
+  },
+  {
+    "name": "StopButton",
+    "area": "coil",
+    "address": 1,
+    "dataType": "bool",
+    "comment": "Stop command"
+  },
+  {
+    "name": "MotorRun",
+    "area": "coil",
+    "address": 2,
+    "dataType": "bool",
+    "comment": "Motor run output"
+  },
+  {
+    "name": "FaultCode",
+    "area": "holding_register",
+    "address": 100,
+    "dataType": "uint16",
+    "comment": "Current fault code"
+  }
+]
