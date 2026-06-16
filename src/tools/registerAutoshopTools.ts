@@ -1,22 +1,29 @@
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_MONITOR_ITERATIONS, DEFAULT_OUTPUT_DIR, SUPPORTED_LANGUAGES, SUPPORTED_PROTOCOLS } from "../constants.js";
+import { AUTOSHOP_AI_COMMAND_FILE, DEFAULT_AUTOSHOP_INSTALL_DIR, DEFAULT_MONITOR_INTERVAL_MS, DEFAULT_MONITOR_ITERATIONS, DEFAULT_OUTPUT_DIR, SUPPORTED_LANGUAGES, SUPPORTED_PROTOCOLS } from "../constants.js";
 import {
+  analyzeCallGraphInputSchema,
   bootstrapInputSchema,
+  capabilitySelfTestInputSchema,
+  detectOpenInstancesInputSchema,
   generateLadderInputSchema,
   generateStInputSchema,
+  instructionCatalogInputSchema,
   listProgramBlocksInputSchema,
   monitorPointsInputSchema,
   parseVariableTablesInputSchema,
   readBlockSourceInputSchema,
   readPointsInputSchema,
   scaffoldProjectInputSchema,
+  scanActiveProjectInputSchema,
   scanProjectInputSchema,
   searchSymbolsInputSchema,
   validatePointTableInputSchema,
   writePointsInputSchema,
 } from "../schemas/autoshop.js";
+import { analyzeCallGraph } from "../services/autoshop-analysis.js";
 import { listBlocks, parseVariableTables, readBlock, scanProject, searchSymbols } from "../services/autoshop-project.js";
+import { detectAutoShopInstances, getActiveAutoShopInstance, getActiveAutoShopProjectPath, pathExists, readInstructionCatalog, readProjectCommunicationConfig } from "../services/autoshop-runtime.js";
 import { formatResult } from "../services/format.js";
 import { buildLadderFilename, buildLadderJsonFilename, generateLadderDiagram } from "../services/ladder-generator.js";
 import { monitorModbusPoints, readModbusPoints, writeModbusPoints } from "../services/modbus.js";
@@ -46,11 +53,16 @@ export function registerAutoshopTools(server: McpServer): void {
         supported_languages: [...SUPPORTED_LANGUAGES],
         supported_protocols: [...SUPPORTED_PROTOCOLS],
         recommended_next_tools: [
+          "autoshop_detect_open_instances",
+          "autoshop_scan_active_project",
+          "autoshop_run_capability_self_test",
           "autoshop_scan_project",
           "autoshop_list_program_blocks",
           "autoshop_read_block_source",
+          "autoshop_analyze_call_graph",
           "autoshop_search_symbols",
           "autoshop_parse_variable_tables",
+          "autoshop_list_instruction_catalog",
           "autoshop_validate_point_table",
           "autoshop_generate_st_source",
           "autoshop_generate_ladder",
@@ -69,14 +81,258 @@ export function registerAutoshopTools(server: McpServer): void {
           `- Supported code languages: ${SUPPORTED_LANGUAGES.join(", ")}`,
           `- Supported live protocols: ${SUPPORTED_PROTOCOLS.join(", ")}`,
           "- Recommended flow:",
-          "  1. scan the AutoShop project folder",
-          "  2. list/read program blocks and search symbols",
+          "  1. detect the open AutoShop instance or scan the active project",
+          "  2. list/read program blocks, analyze the call graph, and search symbols",
           "  3. parse variable tables or validate external point tables",
-          "  4. generate ST source or ladder rungs for manual implementation",
-          "  5. use Modbus TCP tools for live read/write when needed",
+          "  4. consult the AutoShop instruction catalog for available commands",
+          "  5. generate ST source or ladder rungs for manual implementation",
+          "  6. use Modbus TCP tools for live read/write when needed",
         ],
       );
 
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_detect_open_instances",
+    {
+      title: "Detect Open AutoShop Instances",
+      description: "Read-only detection of running AutoShop windows. Parses the main window title to find the open project path, active block, AutoShop version, and process path.",
+      inputSchema: detectOpenInstancesInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ response_format }) => {
+      const instances = await detectAutoShopInstances();
+      const payload = {
+        count: instances.length,
+        instances,
+      };
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "Open AutoShop Instances",
+        payload,
+        [
+          "",
+          `- Running AutoShop instances: ${instances.length}`,
+          ...(instances.length === 0
+            ? ["- No AutoShop window was detected."]
+            : instances.map((instance) =>
+                `- PID ${instance.processId}: ${instance.productVersion ?? "unknown version"}, project=${instance.projectPath ?? "not detected"}, active=${instance.activeBlock ?? "unknown"}`,
+              )),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_scan_active_project",
+    {
+      title: "Scan Active AutoShop Project",
+      description: "Read-only scan of the project currently shown in the open AutoShop window. This is the AutoShop counterpart to attaching to an already-open TIA project and reading its project tree.",
+      inputSchema: scanActiveProjectInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ includeFiles, response_format }) => {
+      const activeProjectPath = await getActiveAutoShopProjectPath();
+      const result = await scanProject({ projectPath: activeProjectPath, includeFiles });
+      const communication = await readProjectCommunicationConfig(activeProjectPath);
+      const payload = {
+        active_project_path: activeProjectPath,
+        communication,
+        scan: result,
+      };
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "Active AutoShop Project Scan",
+        payload as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Active project: ${activeProjectPath}`,
+          `- Programs: ${result.counts.programs} (${result.counts.ladder_blocks} LD, ${result.counts.st_blocks} ST)`,
+          `- Function blocks: ${result.counts.function_blocks}`,
+          `- Variable tables: ${result.counts.variable_tables}`,
+          `- folder.txt index: ${result.folder_index.exists ? "found" : "not found"}`,
+          ...(communication?.ip ? [`- Configured PLC IP: ${communication.ip}`] : []),
+          ...result.warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_run_capability_self_test",
+    {
+      title: "Run AutoShop Capability Self Test",
+      description: "Read-only readiness check for this AutoShop MCP: detects running AutoShop, resolves the active project, checks key installation files, scans the project, reads communication config, and verifies the instruction catalog.",
+      inputSchema: capabilitySelfTestInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ projectPath, installPath, response_format }) => {
+      const instances = await detectAutoShopInstances();
+      const activeInstance = instances.find((instance) => instance.projectExists) ?? instances[0];
+      const effectiveProjectPath = projectPath ?? activeInstance?.projectPath;
+      const effectiveInstallPath = installPath ?? (activeInstance?.executablePath ? path.dirname(activeInstance.executablePath) : DEFAULT_AUTOSHOP_INSTALL_DIR);
+      const checks: Record<string, unknown> = {
+        autoshop_process_detected: instances.length > 0,
+        active_project_detected: Boolean(activeInstance?.projectPath),
+        active_project_exists: Boolean(activeInstance?.projectExists),
+        install_path: effectiveInstallPath,
+        autoshop_exe_exists: await pathExists(path.join(effectiveInstallPath, "AutoShop.exe")),
+        instruction_catalog_exists: await pathExists(path.join(effectiveInstallPath, AUTOSHOP_AI_COMMAND_FILE)),
+        st_compiler_exists: await pathExists(path.join(effectiveInstallPath, "STCompiler.dll")),
+        st_lang_exists: await pathExists(path.join(effectiveInstallPath, "Bin", "StLang.exe")),
+      };
+
+      let scan: Awaited<ReturnType<typeof scanProject>> | undefined;
+      let communication: Awaited<ReturnType<typeof readProjectCommunicationConfig>> | undefined;
+      const warnings: string[] = [];
+      if (effectiveProjectPath) {
+        try {
+          scan = await scanProject({ projectPath: effectiveProjectPath, includeFiles: false });
+          communication = await readProjectCommunicationConfig(effectiveProjectPath);
+        } catch (error) {
+          warnings.push(`Project scan failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        warnings.push("No projectPath was supplied and no active AutoShop project was detected.");
+      }
+
+      const catalog = await readInstructionCatalog({ installPath: effectiveInstallPath, limit: 5, offset: 0 });
+      warnings.push(...catalog.warnings);
+
+      const payload = {
+        instances,
+        active_instance: activeInstance,
+        effective_project_path: effectiveProjectPath,
+        checks,
+        project_counts: scan?.counts,
+        communication,
+        instruction_catalog_count: catalog.total_count,
+        recommended_next_tools: effectiveProjectPath
+          ? ["autoshop_scan_project", "autoshop_analyze_call_graph", "autoshop_list_program_blocks", "autoshop_parse_variable_tables"]
+          : ["autoshop_detect_open_instances"],
+        warnings,
+      };
+
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Capability Self Test",
+        payload as unknown as Record<string, unknown>,
+        [
+          "",
+          `- AutoShop running: ${instances.length > 0 ? "yes" : "no"}`,
+          `- Active project: ${effectiveProjectPath ?? "not detected"}`,
+          `- Install path: ${effectiveInstallPath}`,
+          `- Instruction catalog entries: ${catalog.total_count}`,
+          ...(scan ? [`- Project blocks: ${scan.counts.programs + scan.counts.function_blocks}`, `- Variable tables: ${scan.counts.variable_tables}`] : []),
+          ...(communication?.ip ? [`- Configured PLC IP: ${communication.ip}`] : []),
+          ...warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_list_instruction_catalog",
+    {
+      title: "List AutoShop Instruction Catalog",
+      description: "Read the AutoShop AI assistant instruction catalog from AIAssistantELinkCmd.xml, with filtering and pagination. Useful before generating ST or ladder material.",
+      inputSchema: instructionCatalogInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ installPath, query, limit, offset, response_format }) => {
+      const result = await readInstructionCatalog({ installPath, query, limit, offset });
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Instruction Catalog",
+        result as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Source: ${result.source_file}`,
+          `- Total: ${result.total_count}`,
+          `- Showing: ${result.count} from offset ${result.offset}`,
+          ...result.instructions.slice(0, 80).map((instruction) => `- ${instruction}`),
+          ...(result.has_more ? [`- Next offset: ${result.next_offset}`] : []),
+          ...result.warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_analyze_call_graph",
+    {
+      title: "Analyze AutoShop Call Graph",
+      description: "Read AutoShop program blocks and build a best-effort CALL graph. This helps understand MAIN/SBR execution structure before editing or generating code.",
+      inputSchema: analyzeCallGraphInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ projectPath, maxBlocks, response_format }) => {
+      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+      const result = await analyzeCallGraph({ projectPath: effectiveProjectPath, maxBlocks });
+      const mainEdges = result.edges.filter((edge) => edge.from.toUpperCase() === "MAIN");
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Call Graph",
+        result as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Project: ${result.project_path}`,
+          `- Blocks scanned: ${result.scanned_blocks}/${result.total_blocks}`,
+          `- CALL edges: ${result.edges.length}`,
+          `- Unresolved calls: ${result.unresolved_calls.length}`,
+          `- Entry blocks: ${result.entry_blocks.slice(0, 20).join(", ") || "none"}`,
+          "",
+          "## MAIN calls",
+          ...(mainEdges.length > 0 ? mainEdges.slice(0, 80).map((edge) => `- ${edge.to}${edge.resolved ? "" : " (unresolved)"}`) : ["- MAIN block has no extracted CALL edges."]),
+          ...result.warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
       return {
         content: [{ type: "text", text }],
         structuredContent,
@@ -176,7 +432,7 @@ export function registerAutoshopTools(server: McpServer): void {
     "autoshop_list_program_blocks",
     {
       title: "List AutoShop Program Blocks",
-      description: "List AutoShop LD, ST, and FB block files from a project directory, with pagination and language filtering.",
+      description: "List AutoShop LD, ST, and FB block files from a project directory, with pagination and language filtering. If projectPath is omitted, uses the project shown in the active AutoShop window.",
       inputSchema: listProgramBlocksInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -186,7 +442,8 @@ export function registerAutoshopTools(server: McpServer): void {
       },
     },
     async ({ projectPath, language, limit, offset, response_format }) => {
-      const result = await listBlocks({ projectPath, language, limit, offset });
+      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+      const result = await listBlocks({ projectPath: effectiveProjectPath, language, limit, offset });
       const { text, structuredContent } = formatResult(
         response_format,
         "AutoShop Program Blocks",
@@ -212,7 +469,7 @@ export function registerAutoshopTools(server: McpServer): void {
     "autoshop_read_block_source",
     {
       title: "Read AutoShop Block Source",
-      description: "Read one AutoShop block. Text ST files are returned as source; binary LD/FB containers are summarized by extracting readable instructions, calls, comments, and symbols.",
+      description: "Read one AutoShop block. If projectPath or blockName is omitted, uses the active AutoShop window/project. Text ST files are returned as source; binary LD/FB containers are summarized by extracting readable instructions, calls, comments, and symbols.",
       inputSchema: readBlockSourceInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -222,7 +479,13 @@ export function registerAutoshopTools(server: McpServer): void {
       },
     },
     async ({ projectPath, blockName, includeRawStrings, maxStrings, response_format }) => {
-      const result = await readBlock({ projectPath, blockName, includeRawStrings, maxStrings });
+      const activeInstance = !projectPath || !blockName ? await getActiveAutoShopInstance() : undefined;
+      const effectiveProjectPath = projectPath ?? activeInstance?.projectPath ?? await getActiveAutoShopProjectPath();
+      const effectiveBlockName = blockName ?? activeInstance?.activeBlock;
+      if (!effectiveBlockName) {
+        throw new Error("No blockName was supplied and no active block was detected from the AutoShop window title.");
+      }
+      const result = await readBlock({ projectPath: effectiveProjectPath, blockName: effectiveBlockName, includeRawStrings, maxStrings });
       const { text, structuredContent } = formatResult(
         response_format,
         "AutoShop Block Source",
@@ -258,7 +521,7 @@ export function registerAutoshopTools(server: McpServer): void {
     "autoshop_search_symbols",
     {
       title: "Search AutoShop Symbols",
-      description: "Search readable strings in AutoShop blocks, variable tables, and config files. Useful for finding addresses like M8000, subroutine calls, comments, and alarm text.",
+      description: "Search readable strings in AutoShop blocks, variable tables, and config files. If projectPath is omitted, uses the active AutoShop project. Useful for finding addresses like M8000, subroutine calls, comments, and alarm text.",
       inputSchema: searchSymbolsInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -268,7 +531,8 @@ export function registerAutoshopTools(server: McpServer): void {
       },
     },
     async ({ projectPath, query, fileTypes, limit, offset, response_format }) => {
-      const result = await searchSymbols({ projectPath, query, fileTypes, limit, offset });
+      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+      const result = await searchSymbols({ projectPath: effectiveProjectPath, query, fileTypes, limit, offset });
       const lines = [
         "",
         `- Query: ${result.query}`,
@@ -303,7 +567,7 @@ export function registerAutoshopTools(server: McpServer): void {
     "autoshop_parse_variable_tables",
     {
       title: "Parse AutoShop Variable Tables",
-      description: "Extract readable variable records from AutoShop .gdt/.gvt/.csv variable files. AutoShop native tables are partly proprietary, so the result is a best-effort symbol and comment index.",
+      description: "Extract readable variable records from AutoShop .gdt/.gvt/.csv variable files. If projectPath is omitted, uses the active AutoShop project. AutoShop native tables are partly proprietary, so the result is a best-effort symbol and comment index.",
       inputSchema: parseVariableTablesInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -313,7 +577,8 @@ export function registerAutoshopTools(server: McpServer): void {
       },
     },
     async ({ projectPath, tableName, query, limit, offset, response_format }) => {
-      const result = await parseVariableTables({ projectPath, tableName, query, limit, offset });
+      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+      const result = await parseVariableTables({ projectPath: effectiveProjectPath, tableName, query, limit, offset });
       const { text, structuredContent } = formatResult(
         response_format,
         "AutoShop Variable Tables",

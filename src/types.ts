@@ -188,3 +188,50 @@ export interface AutoShopVariableRecord {
   description?: string;
   sourceKind: "csv_row" | "binary_string";
 }
+
+export interface AutoShopOpenInstance {
+  processId: number;
+  processName: string;
+  executablePath?: string;
+  mainWindowTitle: string;
+  productVersion?: string;
+  projectPath?: string;
+  projectName?: string;
+  activeBlock?: string;
+  projectExists: boolean;
+  startedAt?: string;
+}
+
+export interface AutoShopCommunicationConfig {
+  sourcePath: string;
+  type?: string;
+  ip?: string;
+  adapterName?: string;
+  ipName?: string;
+}
+
+export interface AutoShopInstructionCatalog {
+  install_path: string;
+  source_file: string;
+  total_count: number;
+  count: number;
+  offset: number;
+  has_more: boolean;
+  next_offset?: number;
+  instructions: string[];
+  warnings: string[];
+}
+
+export interface AutoShopCallGraphNode {
+  blockName: string;
+  file: string;
+  language: AutoShopProgramLanguage;
+  category: AutoShopBlockInfo["category"];
+}
+
+export interface AutoShopCallGraphEdge {
+  from: string;
+  to: string;
+  resolved: boolean;
+  targetFile?: string;
+}

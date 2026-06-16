@@ -1,21 +1,45 @@
-# autoshop-mcp-server
+# autoshop-mcp-server v1.2
 
-AutoShop MCP for Inovance PLC work.
+MCP server for Inovance AutoShop engineering workflows.
 
-It covers read-only AutoShop project inspection, ST source generation, ladder-logic generation, point-table validation, and live PLC reads/writes over Modbus TCP.
+This server is modeled after the TIA Portal Openness MCP workflow shape, but AutoShop does not expose a confirmed Openness-style public automation API. The implementation therefore focuses on safe, useful capabilities:
+
+- detect the currently open AutoShop window and active project
+- inspect AutoShop project files without modifying them
+- list and read LD/ST/FB blocks
+- extract CALL relationships, symbols, comments, and variable records
+- read the AutoShop AI instruction catalog
+- generate ST and ladder review artifacts for manual implementation
+- read, write, and monitor live PLC points over Modbus TCP
 
 ## Tools
 
+Orientation and current-project context:
+
 - `autoshop_bootstrap`
+- `autoshop_detect_open_instances`
+- `autoshop_scan_active_project`
+- `autoshop_run_capability_self_test`
+- `autoshop_list_instruction_catalog`
+
+Project inspection:
+
 - `autoshop_scan_project`
 - `autoshop_list_program_blocks`
 - `autoshop_read_block_source`
+- `autoshop_analyze_call_graph`
 - `autoshop_search_symbols`
 - `autoshop_parse_variable_tables`
+
+Generation and validation:
+
 - `autoshop_validate_point_table`
 - `autoshop_generate_st_source`
 - `autoshop_generate_ladder`
 - `autoshop_scaffold_project_bundle`
+
+Live PLC access:
+
 - `autoshop_read_live_points`
 - `autoshop_write_live_points`
 - `autoshop_monitor_live_points`
@@ -37,35 +61,51 @@ $env:PORT="3000"
 npm start
 ```
 
-## Ladder
+## MCP client config
 
-Use `examples\ladder.start-stop.json` as a start/stop rung example. The server returns ASCII ladder plus equivalent ST so the logic can be reviewed and recreated in AutoShop.
+```json
+{
+  "mcpServers": {
+    "autoshop": {
+      "command": "node",
+      "args": ["D:\\mcp\\autoshop-mcp\\dist\\index.js"],
+      "cwd": "D:\\mcp\\autoshop-mcp"
+    }
+  }
+}
+```
 
-AutoShop `.LD` and `.FB` files are proprietary binary containers. The project tools extract readable calls, instructions, comments, and symbols from existing blocks, but they do not claim a lossless native LAD import/export format.
+## Chinese user guide
 
-## Existing AutoShop Projects
+See `docs\autoshop-mcp-v1.2-user-guide.md` for a Chinese setup and usage guide.
 
-Start with:
+## Recommended workflow
+
+When AutoShop is already open:
+
+1. Call `autoshop_detect_open_instances`.
+2. Call `autoshop_scan_active_project`.
+3. Call `autoshop_analyze_call_graph`.
+4. Use `autoshop_list_program_blocks`, `autoshop_read_block_source`, `autoshop_search_symbols`, and `autoshop_parse_variable_tables`.
+
+The core project tools can omit `projectPath`; they will use the active AutoShop window. `autoshop_read_block_source` can also omit `blockName`; it will read the active block shown in the AutoShop title bar.
+
+Tested active project:
 
 ```json
 {
   "projectPath": "D:\\牧哲\\1、程序\\镜像\\抛光\\PLC\\111",
-  "response_format": "markdown"
+  "activeBlock": "MAIN",
+  "plcIp": "192.168.250.3"
 }
 ```
 
-Recommended sequence:
+## Ladder and ST
 
-1. `autoshop_scan_project`
-2. `autoshop_list_program_blocks`
-3. `autoshop_read_block_source`
-4. `autoshop_search_symbols`
-5. `autoshop_parse_variable_tables`
+Use `examples\ladder.start-stop.json` as a start/stop rung example. The server returns an ASCII ladder diagram plus equivalent ST so the logic can be reviewed and recreated in AutoShop.
 
-## Point Table
-
-Use `examples\points.sample.json` as a basic Modbus point list.
+AutoShop `.LD` and `.FB` files are proprietary binary containers. The project tools extract readable calls, instructions, comments, and symbols, but they do not claim lossless native LAD import/export.
 
 ## Safety
 
-Live write operations require `confirmRisk=true`.
+Project inspection tools are read-only. Live write operations require `confirmRisk=true`.

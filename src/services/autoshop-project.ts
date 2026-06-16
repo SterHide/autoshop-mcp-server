@@ -9,6 +9,7 @@ import {
   AutoShopProjectFile,
   AutoShopVariableRecord,
 } from "../types.js";
+import { decodeAutoShopText } from "./text-decoder.js";
 import { resolveAbsolutePath } from "./validation.js";
 
 const BLOCK_EXTENSIONS = new Set([".ld", ".st", ".fb"]);
@@ -330,7 +331,7 @@ async function listProjectFiles(projectPath: string): Promise<AutoShopProjectFil
 async function readFolderIndex(projectPath: string): Promise<AutoShopFolderEntry[]> {
   const folderPath = path.join(projectPath, "folder.txt");
   try {
-    const text = await fs.readFile(folderPath, "utf8");
+    const text = decodeAutoShopText(await fs.readFile(folderPath));
     return parseFolderIndex(text, projectPath);
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
@@ -464,27 +465,7 @@ function isMostlyText(buffer: Buffer): boolean {
 }
 
 function decodeTextFile(buffer: Buffer): string {
-  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
-    return buffer.toString("utf16le").replace(/^\uFEFF/, "");
-  }
-  if (looksLikeUtf16Le(buffer)) {
-    return buffer.toString("utf16le").replace(/^\uFEFF/, "");
-  }
-  return buffer.toString("utf8").replace(/^\uFEFF/, "");
-}
-
-function looksLikeUtf16Le(buffer: Buffer): boolean {
-  if (buffer.length < 4) {
-    return false;
-  }
-  const sampleLength = Math.min(buffer.length, 200);
-  let oddNulls = 0;
-  for (let index = 1; index < sampleLength; index += 2) {
-    if (buffer[index] === 0) {
-      oddNulls += 1;
-    }
-  }
-  return oddNulls > sampleLength / 4;
+  return decodeAutoShopText(buffer);
 }
 
 function extractUtf8Strings(buffer: Buffer, maxStrings: number): string[] {

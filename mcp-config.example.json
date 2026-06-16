@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "autoshop": {
+      "command": "node",
+      "args": [
+        "D:\\mcp\\autoshop-mcp\\dist\\index.js"
+      ],
+      "cwd": "D:\\mcp\\autoshop-mcp"
+    }
+  }
+}
