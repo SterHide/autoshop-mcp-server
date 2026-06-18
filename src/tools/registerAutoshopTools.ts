@@ -5,9 +5,11 @@ import {
   analyzeCallGraphInputSchema,
   bootstrapInputSchema,
   capabilitySelfTestInputSchema,
+  exportProjectSnapshotInputSchema,
   detectOpenInstancesInputSchema,
   generateLadderInputSchema,
   generateStInputSchema,
+  inspectProjectHealthInputSchema,
   instructionCatalogInputSchema,
   listProgramBlocksInputSchema,
   monitorPointsInputSchema,
@@ -22,6 +24,7 @@ import {
   writePointsInputSchema,
 } from "../schemas/autoshop.js";
 import { analyzeCallGraph } from "../services/autoshop-analysis.js";
+import { exportProjectSnapshot, inspectProjectHealth } from "../services/autoshop-health.js";
 import { listBlocks, parseVariableTables, readBlock, scanProject, searchSymbols } from "../services/autoshop-project.js";
 import { detectAutoShopInstances, getActiveAutoShopInstance, getActiveAutoShopProjectPath, pathExists, readInstructionCatalog, readProjectCommunicationConfig } from "../services/autoshop-runtime.js";
 import { formatResult } from "../services/format.js";
@@ -30,7 +33,7 @@ import { monitorModbusPoints, readModbusPoints, writeModbusPoints } from "../ser
 import { loadPointDefinitions, summarizePointValidation, writeMarkdownFile, writePointArtifacts, writeTextFile } from "../services/point-table.js";
 import { buildStFilename, generateStructuredTextSource, templateHelp } from "../services/st-generator.js";
 import { ensureDirectory, resolveAbsolutePath, validatePointTable } from "../services/validation.js";
-import { PointDefinition, ProjectBundleSpec } from "../types.js";
+import { AutoShopContextSelector, PointDefinition, ProjectBundleSpec } from "../types.js";
 
 export function registerAutoshopTools(server: McpServer): void {
   server.registerTool(
@@ -60,6 +63,8 @@ export function registerAutoshopTools(server: McpServer): void {
           "autoshop_list_program_blocks",
           "autoshop_read_block_source",
           "autoshop_analyze_call_graph",
+          "autoshop_inspect_project_health",
+          "autoshop_export_project_snapshot",
           "autoshop_search_symbols",
           "autoshop_parse_variable_tables",
           "autoshop_list_instruction_catalog",
@@ -82,11 +87,12 @@ export function registerAutoshopTools(server: McpServer): void {
           `- Supported live protocols: ${SUPPORTED_PROTOCOLS.join(", ")}`,
           "- Recommended flow:",
           "  1. detect the open AutoShop instance or scan the active project",
-          "  2. list/read program blocks, analyze the call graph, and search symbols",
-          "  3. parse variable tables or validate external point tables",
-          "  4. consult the AutoShop instruction catalog for available commands",
-          "  5. generate ST source or ladder rungs for manual implementation",
-          "  6. use Modbus TCP tools for live read/write when needed",
+          "  2. list/read program blocks, analyze the call graph, and run project health checks",
+          "  3. search symbols and parse variable tables",
+          "  4. export a project snapshot before larger AI-assisted changes",
+          "  5. consult the AutoShop instruction catalog for available commands",
+          "  6. generate ST source or ladder rungs for manual implementation",
+          "  7. use Modbus TCP tools for live read/write when needed",
         ],
       );
 
@@ -101,7 +107,7 @@ export function registerAutoshopTools(server: McpServer): void {
     "autoshop_detect_open_instances",
     {
       title: "Detect Open AutoShop Instances",
-      description: "Read-only detection of running AutoShop windows. Parses the main window title to find the open project path, active block, AutoShop version, and process path.",
+      description: "Read-only detection of running AutoShop windows. Parses the main window title to find the open project path, active block, AutoShop version, process path, foreground status, and selected default instance.",
       inputSchema: detectOpenInstancesInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -110,10 +116,12 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ response_format }) => {
+    async ({ projectName, windowTitleContains, response_format }) => {
       const instances = await detectAutoShopInstances();
+      const selectedInstance = await getActiveAutoShopInstance({ projectName, windowTitleContains });
       const payload = {
         count: instances.length,
+        selected_instance: selectedInstance,
         instances,
       };
       const { text, structuredContent } = formatResult(
@@ -126,7 +134,7 @@ export function registerAutoshopTools(server: McpServer): void {
           ...(instances.length === 0
             ? ["- No AutoShop window was detected."]
             : instances.map((instance) =>
-                `- PID ${instance.processId}: ${instance.productVersion ?? "unknown version"}, project=${instance.projectPath ?? "not detected"}, active=${instance.activeBlock ?? "unknown"}`,
+                `- PID ${instance.processId}${instance.processId === selectedInstance?.processId ? " (selected)" : ""}: ${instance.productVersion ?? "unknown version"}, foreground=${instance.isForeground ? "yes" : "no"}, project=${instance.projectPath ?? "not detected"}, active=${instance.activeBlock ?? "unknown"}`,
               )),
         ],
       );
@@ -150,8 +158,8 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ includeFiles, response_format }) => {
-      const activeProjectPath = await getActiveAutoShopProjectPath();
+    async ({ projectPath, projectName, windowTitleContains, includeFiles, response_format }) => {
+      const activeProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
       const result = await scanProject({ projectPath: activeProjectPath, includeFiles });
       const communication = await readProjectCommunicationConfig(activeProjectPath);
       const payload = {
@@ -194,9 +202,9 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, installPath, response_format }) => {
+    async ({ projectPath, projectName, windowTitleContains, installPath, response_format }) => {
       const instances = await detectAutoShopInstances();
-      const activeInstance = instances.find((instance) => instance.projectExists) ?? instances[0];
+      const activeInstance = await getActiveAutoShopInstance({ projectPath, projectName, windowTitleContains });
       const effectiveProjectPath = projectPath ?? activeInstance?.projectPath;
       const effectiveInstallPath = installPath ?? (activeInstance?.executablePath ? path.dirname(activeInstance.executablePath) : DEFAULT_AUTOSHOP_INSTALL_DIR);
       const checks: Record<string, unknown> = {
@@ -312,8 +320,8 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, maxBlocks, response_format }) => {
-      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+    async ({ projectPath, projectName, windowTitleContains, maxBlocks, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
       const result = await analyzeCallGraph({ projectPath: effectiveProjectPath, maxBlocks });
       const mainEdges = result.edges.filter((edge) => edge.from.toUpperCase() === "MAIN");
       const { text, structuredContent } = formatResult(
@@ -331,6 +339,94 @@ export function registerAutoshopTools(server: McpServer): void {
           "## MAIN calls",
           ...(mainEdges.length > 0 ? mainEdges.slice(0, 80).map((edge) => `- ${edge.to}${edge.resolved ? "" : " (unresolved)"}`) : ["- MAIN block has no extracted CALL edges."]),
           ...result.warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_inspect_project_health",
+    {
+      title: "Inspect AutoShop Project Health",
+      description: "Read-only project health inspection for the selected AutoShop project. Summarizes project files, folder.txt alignment, CALL graph issues, variable tables, communication config, and large or orphaned blocks.",
+      inputSchema: inspectProjectHealthInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ projectPath, projectName, windowTitleContains, maxBlocks, variableLimit, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
+      const result = await inspectProjectHealth({ projectPath: effectiveProjectPath, maxBlocks, variableLimit });
+      const checkCounts = summarizeHealthChecks(result.checks);
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Project Health",
+        result as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Project: ${result.project_name}`,
+          `- Path: ${result.project_path}`,
+          `- Checks: ${checkCounts.ok} ok, ${checkCounts.warning} warning, ${checkCounts.error} error`,
+          `- Programs: ${result.summary.programs} (${result.summary.ladder_blocks} LD, ${result.summary.st_blocks} ST)`,
+          `- Function blocks: ${result.summary.function_blocks}`,
+          `- Variable tables: ${result.summary.variable_tables}`,
+          `- CALL edges: ${result.summary.call_edges}`,
+          `- Unresolved calls: ${result.summary.unresolved_calls}`,
+          `- Orphan blocks: ${result.summary.orphan_blocks}`,
+          ...(result.communication?.ip ? [`- Configured PLC IP: ${result.communication.ip}`] : []),
+          "",
+          "## Checks",
+          ...result.checks.map((check) => `- [${check.severity.toUpperCase()}] ${check.id}: ${check.message}`),
+          "",
+          "## Largest blocks",
+          ...result.largest_blocks.map((block) => `- ${block.name}: ${block.language}, ${block.sizeBytes} bytes`),
+          ...result.warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_export_project_snapshot",
+    {
+      title: "Export AutoShop Project Snapshot",
+      description: "Export a local JSON and Markdown snapshot for the selected AutoShop project. The snapshot includes the same health checks as autoshop_inspect_project_health and is intended for review before AI-assisted changes.",
+      inputSchema: exportProjectSnapshotInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ projectPath, projectName, windowTitleContains, maxBlocks, variableLimit, outputDirectory, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
+      const result = await exportProjectSnapshot({ projectPath: effectiveProjectPath, maxBlocks, variableLimit, outputDirectory });
+      const checkCounts = summarizeHealthChecks(result.health.checks);
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Project Snapshot",
+        result as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Project: ${result.health.project_name}`,
+          `- Path: ${result.project_path}`,
+          `- Output directory: ${result.output_directory}`,
+          `- Checks: ${checkCounts.ok} ok, ${checkCounts.warning} warning, ${checkCounts.error} error`,
+          `- CALL edges: ${result.health.summary.call_edges}`,
+          `- Unresolved calls: ${result.health.summary.unresolved_calls}`,
+          ...result.artifacts.map((artifact) => `- Artifact: ${artifact}`),
         ],
       );
       return {
@@ -396,8 +492,9 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, includeFiles, response_format }) => {
-      const result = await scanProject({ projectPath, includeFiles });
+    async ({ projectPath, projectName, windowTitleContains, includeFiles, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
+      const result = await scanProject({ projectPath: effectiveProjectPath, includeFiles });
       const programEntries = result.folder_index.entries.filter((entry) => entry.category === "PROG" && entry.kind === "FILE");
       const variableEntries = result.folder_index.entries.filter((entry) => entry.category === "VAR" && entry.kind === "FILE");
       const fbEntries = result.folder_index.entries.filter((entry) => entry.category === "FB" && entry.kind === "FILE");
@@ -441,8 +538,8 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, language, limit, offset, response_format }) => {
-      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+    async ({ projectPath, projectName, windowTitleContains, language, limit, offset, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
       const result = await listBlocks({ projectPath: effectiveProjectPath, language, limit, offset });
       const { text, structuredContent } = formatResult(
         response_format,
@@ -478,9 +575,9 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, blockName, includeRawStrings, maxStrings, response_format }) => {
-      const activeInstance = !projectPath || !blockName ? await getActiveAutoShopInstance() : undefined;
-      const effectiveProjectPath = projectPath ?? activeInstance?.projectPath ?? await getActiveAutoShopProjectPath();
+    async ({ projectPath, projectName, windowTitleContains, blockName, includeRawStrings, maxStrings, response_format }) => {
+      const activeInstance = !projectPath || !blockName ? await getActiveAutoShopInstance({ projectPath, projectName, windowTitleContains }) : undefined;
+      const effectiveProjectPath = projectPath ?? activeInstance?.projectPath ?? await getActiveAutoShopProjectPath({ projectName, windowTitleContains });
       const effectiveBlockName = blockName ?? activeInstance?.activeBlock;
       if (!effectiveBlockName) {
         throw new Error("No blockName was supplied and no active block was detected from the AutoShop window title.");
@@ -530,8 +627,8 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, query, fileTypes, limit, offset, response_format }) => {
-      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+    async ({ projectPath, projectName, windowTitleContains, query, fileTypes, limit, offset, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
       const result = await searchSymbols({ projectPath: effectiveProjectPath, query, fileTypes, limit, offset });
       const lines = [
         "",
@@ -576,8 +673,8 @@ export function registerAutoshopTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ projectPath, tableName, query, limit, offset, response_format }) => {
-      const effectiveProjectPath = projectPath ?? await getActiveAutoShopProjectPath();
+    async ({ projectPath, projectName, windowTitleContains, tableName, query, limit, offset, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
       const result = await parseVariableTables({ projectPath: effectiveProjectPath, tableName, query, limit, offset });
       const { text, structuredContent } = formatResult(
         response_format,
@@ -1027,6 +1124,23 @@ export function registerAutoshopTools(server: McpServer): void {
         structuredContent,
       };
     },
+  );
+}
+
+async function resolveProjectPath(selector: AutoShopContextSelector): Promise<string> {
+  if (selector.projectPath) {
+    return selector.projectPath;
+  }
+  return getActiveAutoShopProjectPath(selector);
+}
+
+function summarizeHealthChecks(checks: Array<{ severity: "ok" | "warning" | "error" }>): Record<"ok" | "warning" | "error", number> {
+  return checks.reduce(
+    (summary, check) => {
+      summary[check.severity] += 1;
+      return summary;
+    },
+    { ok: 0, warning: 0, error: 0 },
   );
 }
 

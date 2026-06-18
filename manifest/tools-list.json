@@ -1,39 +1,63 @@
 {
   "package": "autoshop-mcp-server",
-  "version": "1.2.0",
-  "generatedAt": "2026-06-16",
-  "toolCount": 18,
+  "version": "1.4.0",
+  "generatedAt": "2026-06-18",
+  "toolCount": 20,
   "note": "Static snapshot. Runtime tools/list remains authoritative when the MCP server is running.",
   "tools": [
     {
       "name": "autoshop_bootstrap",
       "layer": "L0",
       "domain": "Bootstrap",
-      "description": "Read-only orientation for supported AutoShop workflows, generated artifacts, and live communication options."
+      "description": "Read-only orientation for supported AutoShop workflows, generated artifacts, project health checks, snapshots, and live communication options."
     },
     {
       "name": "autoshop_detect_open_instances",
       "layer": "L0",
       "domain": "Runtime",
-      "description": "Detect running AutoShop windows and parse project path, active block, version, and process path from the main window title."
+      "description": "Detect running AutoShop windows and parse project path, active block, version, process path, foreground status, and selected default instance."
     },
     {
       "name": "autoshop_scan_active_project",
       "layer": "L1",
       "domain": "Project",
-      "description": "Scan the project shown in the active AutoShop window and read communication settings such as configured PLC IP."
+      "description": "Scan the selected open AutoShop project and read communication settings such as configured PLC IP."
     },
     {
       "name": "autoshop_run_capability_self_test",
       "layer": "L0",
       "domain": "Diagnostics",
-      "description": "Read-only readiness check for AutoShop process detection, active project scan, install files, communication config, and instruction catalog."
+      "description": "Read-only readiness check for AutoShop process detection, selected project scan, install files, communication config, and instruction catalog."
     },
     {
       "name": "autoshop_list_instruction_catalog",
       "layer": "L1",
       "domain": "InstructionCatalog",
       "description": "List and filter instructions from AutoShop AIAssistantELinkCmd.xml."
+    },
+    {
+      "name": "autoshop_analyze_call_graph",
+      "layer": "L1",
+      "domain": "Project",
+      "description": "Build a best-effort CALL graph across AutoShop blocks and resolve called block files."
+    },
+    {
+      "name": "autoshop_inspect_project_health",
+      "layer": "L1",
+      "domain": "Diagnostics",
+      "description": "Inspect project health, including project files, folder.txt alignment, CALL graph, communication config, variable tables, orphan blocks, and largest blocks."
+    },
+    {
+      "name": "autoshop_export_project_snapshot",
+      "layer": "L1",
+      "domain": "Diagnostics",
+      "description": "Export JSON and Markdown project snapshots containing health checks and project summary data."
+    },
+    {
+      "name": "autoshop_validate_point_table",
+      "layer": "L1",
+      "domain": "Validation",
+      "description": "Validate JSON or CSV point tables for naming, duplicate addresses, Modbus areas, and data types."
     },
     {
       "name": "autoshop_scan_project",
@@ -45,19 +69,13 @@
       "name": "autoshop_list_program_blocks",
       "layer": "L1",
       "domain": "Project",
-      "description": "List LD, ST, and FB block files with pagination and language filtering. Defaults to the active AutoShop project when projectPath is omitted."
+      "description": "List LD, ST, and FB block files with pagination and language filtering. Defaults to the selected open AutoShop project when projectPath is omitted."
     },
     {
       "name": "autoshop_read_block_source",
       "layer": "L1",
       "domain": "Project",
       "description": "Read ST text blocks or summarize LD/FB binary containers by extracting readable calls, instructions, comments, and symbols."
-    },
-    {
-      "name": "autoshop_analyze_call_graph",
-      "layer": "L1",
-      "domain": "Project",
-      "description": "Build a best-effort CALL graph across AutoShop blocks and resolve called block files."
     },
     {
       "name": "autoshop_search_symbols",
@@ -72,22 +90,16 @@
       "description": "Extract readable variable records from .gdt, .gvt, .csv, .fbi, .eipgvt, and .ecgvt files."
     },
     {
-      "name": "autoshop_validate_point_table",
-      "layer": "L1",
-      "domain": "Validation",
-      "description": "Validate JSON or CSV point tables for naming, duplicate addresses, Modbus areas, and data types."
+      "name": "autoshop_generate_ladder",
+      "layer": "L2",
+      "domain": "Generation",
+      "description": "Generate ASCII ladder review material and equivalent ST from structured rung JSON."
     },
     {
       "name": "autoshop_generate_st_source",
       "layer": "L2",
       "domain": "Generation",
       "description": "Generate Structured Text source from templates or explicit operation lists, with optional file output."
-    },
-    {
-      "name": "autoshop_generate_ladder",
-      "layer": "L2",
-      "domain": "Generation",
-      "description": "Generate ASCII ladder review material and equivalent ST from structured rung JSON."
     },
     {
       "name": "autoshop_scaffold_project_bundle",

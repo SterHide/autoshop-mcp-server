@@ -1,5 +1,5 @@
 export const SERVER_NAME = "autoshop-mcp-server";
-export const SERVER_VERSION = "1.2.0";
+export const SERVER_VERSION = "1.4.0";
 export const DEFAULT_OUTPUT_DIR = "generated";
 export const DEFAULT_AUTOSHOP_INSTALL_DIR = "D:\\Inovance Control\\AutoShop";
 export const AUTOSHOP_PROCESS_NAME = "AutoShop";

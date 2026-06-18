@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { AUTOSHOP_AI_COMMAND_FILE, AUTOSHOP_PROCESS_NAME, DEFAULT_AUTOSHOP_INSTALL_DIR } from "../constants.js";
-import { AutoShopCommunicationConfig, AutoShopInstructionCatalog, AutoShopOpenInstance } from "../types.js";
+import { AutoShopCommunicationConfig, AutoShopContextSelector, AutoShopInstructionCatalog, AutoShopOpenInstance } from "../types.js";
 import { decodeAutoShopText } from "./text-decoder.js";
 import { resolveAbsolutePath } from "./validation.js";
 
@@ -15,6 +15,7 @@ interface RawAutoShopProcess {
   Path?: string;
   MainWindowTitle?: string;
   StartTime?: string;
+  IsForeground?: boolean;
 }
 
 export async function detectAutoShopInstances(): Promise<AutoShopOpenInstance[]> {
@@ -26,6 +27,23 @@ export async function detectAutoShopInstances(): Promise<AutoShopOpenInstance[]>
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
+$foregroundPid = 0
+try {
+  Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class AutoShopMcpWin32 {
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+"@
+  $foregroundWindow = [AutoShopMcpWin32]::GetForegroundWindow()
+  [uint32]$pidOut = 0
+  [void][AutoShopMcpWin32]::GetWindowThreadProcessId($foregroundWindow, [ref]$pidOut)
+  $foregroundPid = [int]$pidOut
+} catch {}
 $items = Get-Process -Name '${AUTOSHOP_PROCESS_NAME}' -ErrorAction SilentlyContinue | ForEach-Object {
   $started = $null
   try { $started = $_.StartTime.ToString('o') } catch {}
@@ -35,6 +53,7 @@ $items = Get-Process -Name '${AUTOSHOP_PROCESS_NAME}' -ErrorAction SilentlyConti
     Path = $_.Path
     MainWindowTitle = $_.MainWindowTitle
     StartTime = $started
+    IsForeground = ($_.Id -eq $foregroundPid)
   }
 }
 $json = ConvertTo-Json -InputObject @($items) -Depth 5 -Compress
@@ -49,19 +68,19 @@ if ([string]::IsNullOrWhiteSpace($json)) { '[]' } else { $json }
     );
     const parsed = parseProcessJson(stdout);
     const instances = await Promise.all(parsed.map(toOpenInstance));
-    return instances.sort((left, right) => Number(right.projectExists) - Number(left.projectExists));
+    return instances.sort(compareInstances);
   } catch {
     return [];
   }
 }
 
-export async function getActiveAutoShopInstance(): Promise<AutoShopOpenInstance | undefined> {
+export async function getActiveAutoShopInstance(selector: AutoShopContextSelector = {}): Promise<AutoShopOpenInstance | undefined> {
   const instances = await detectAutoShopInstances();
-  return instances.find((instance) => instance.projectExists) ?? instances[0];
+  return selectAutoShopInstance(instances, selector);
 }
 
-export async function getActiveAutoShopProjectPath(): Promise<string> {
-  const active = await getActiveAutoShopInstance();
+export async function getActiveAutoShopProjectPath(selector: AutoShopContextSelector = {}): Promise<string> {
+  const active = await getActiveAutoShopInstance(selector);
   if (!active?.projectPath) {
     throw new Error("No open AutoShop project was detected. Open a project in AutoShop or pass projectPath explicitly.");
   }
@@ -69,6 +88,50 @@ export async function getActiveAutoShopProjectPath(): Promise<string> {
     throw new Error(`AutoShop window reports project path "${active.projectPath}", but that directory was not found.`);
   }
   return active.projectPath;
+}
+
+export function selectAutoShopInstance(
+  instances: AutoShopOpenInstance[],
+  selector: AutoShopContextSelector = {},
+): AutoShopOpenInstance | undefined {
+  const normalizedSelectorPath = selector.projectPath ? path.normalize(selector.projectPath).toLowerCase() : undefined;
+  const selectorProjectName = selector.projectName?.trim().toLowerCase();
+  const selectorTitle = selector.windowTitleContains?.trim().toLowerCase();
+  const envProjectPath = process.env.AUTOSHOP_PROJECT_PATH ? path.normalize(process.env.AUTOSHOP_PROJECT_PATH).toLowerCase() : undefined;
+  const envProjectName = process.env.AUTOSHOP_PROJECT_NAME?.trim().toLowerCase();
+  const envTitle = process.env.AUTOSHOP_WINDOW_TITLE?.trim().toLowerCase();
+
+  const matchers: Array<(instance: AutoShopOpenInstance) => boolean> = [];
+  if (normalizedSelectorPath) {
+    matchers.push((instance) => Boolean(instance.projectPath && path.normalize(instance.projectPath).toLowerCase() === normalizedSelectorPath));
+  }
+  if (selectorProjectName) {
+    matchers.push((instance) => instance.projectName?.toLowerCase() === selectorProjectName);
+  }
+  if (selectorTitle) {
+    matchers.push((instance) => instance.mainWindowTitle.toLowerCase().includes(selectorTitle));
+  }
+  if (envProjectPath) {
+    matchers.push((instance) => Boolean(instance.projectPath && path.normalize(instance.projectPath).toLowerCase() === envProjectPath));
+  }
+  if (envProjectName) {
+    matchers.push((instance) => instance.projectName?.toLowerCase() === envProjectName);
+  }
+  if (envTitle) {
+    matchers.push((instance) => instance.mainWindowTitle.toLowerCase().includes(envTitle));
+  }
+
+  for (const matcher of matchers) {
+    const matched = instances.find((instance) => matcher(instance));
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return instances.find((instance) => instance.isForeground && instance.projectExists) ??
+    instances.find((instance) => instance.isForeground) ??
+    instances.find((instance) => instance.projectExists) ??
+    instances[0];
 }
 
 export async function readProjectCommunicationConfig(projectPath: string): Promise<AutoShopCommunicationConfig | undefined> {
@@ -166,6 +229,7 @@ async function toOpenInstance(raw: RawAutoShopProcess): Promise<AutoShopOpenInst
     processName: raw.ProcessName ?? AUTOSHOP_PROCESS_NAME,
     executablePath: raw.Path || undefined,
     mainWindowTitle: raw.MainWindowTitle ?? "",
+    isForeground: raw.IsForeground,
     productVersion: titleInfo.productVersion,
     projectPath: titleInfo.projectPath,
     projectName: titleInfo.projectPath ? path.basename(titleInfo.projectPath) : undefined,
@@ -173,6 +237,21 @@ async function toOpenInstance(raw: RawAutoShopProcess): Promise<AutoShopOpenInst
     projectExists,
     startedAt: raw.StartTime || undefined,
   };
+}
+
+function compareInstances(left: AutoShopOpenInstance, right: AutoShopOpenInstance): number {
+  return Number(right.isForeground) - Number(left.isForeground) ||
+    Number(right.projectExists) - Number(left.projectExists) ||
+    startedAtMs(right) - startedAtMs(left) ||
+    right.processId - left.processId;
+}
+
+function startedAtMs(instance: AutoShopOpenInstance): number {
+  if (!instance.startedAt) {
+    return 0;
+  }
+  const value = Date.parse(instance.startedAt);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function parseAutoShopWindowTitle(title: string): {

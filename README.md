@@ -1,16 +1,25 @@
-# autoshop-mcp-server v1.2
+# autoshop-mcp-server v1.4
 
 MCP server for Inovance AutoShop engineering workflows.
 
-This server is modeled after the TIA Portal Openness MCP workflow shape, but AutoShop does not expose a confirmed Openness-style public automation API. The implementation therefore focuses on safe, useful capabilities:
+This server follows the workflow shape of TIA Portal Openness MCP where practical, but AutoShop does not expose a confirmed Openness-style public automation API. The implementation therefore focuses on safe capabilities that are useful while AutoShop is open:
 
-- detect the currently open AutoShop window and active project
+- detect open AutoShop windows and select the intended project
 - inspect AutoShop project files without modifying them
 - list and read LD/ST/FB blocks
 - extract CALL relationships, symbols, comments, and variable records
+- run project health checks and export review snapshots
 - read the AutoShop AI instruction catalog
 - generate ST and ladder review artifacts for manual implementation
 - read, write, and monitor live PLC points over Modbus TCP
+
+## v1.4 Highlights
+
+- Multi-instance project selection with `projectName`, `windowTitleContains`, `AUTOSHOP_PROJECT_NAME`, `AUTOSHOP_PROJECT_PATH`, and `AUTOSHOP_WINDOW_TITLE`.
+- Foreground/window-aware AutoShop instance detection, with newest valid project fallback.
+- New `autoshop_inspect_project_health` tool for folder index, call graph, variable table, communication config, orphan block, and large block checks.
+- New `autoshop_export_project_snapshot` tool that writes JSON and Markdown project snapshots.
+- Updated MCP manifest and Chinese user guide.
 
 ## Tools
 
@@ -28,6 +37,8 @@ Project inspection:
 - `autoshop_list_program_blocks`
 - `autoshop_read_block_source`
 - `autoshop_analyze_call_graph`
+- `autoshop_inspect_project_health`
+- `autoshop_export_project_snapshot`
 - `autoshop_search_symbols`
 - `autoshop_parse_variable_tables`
 
@@ -61,7 +72,7 @@ $env:PORT="3000"
 npm start
 ```
 
-## MCP client config
+## MCP Client Config
 
 ```json
 {
@@ -75,28 +86,45 @@ npm start
 }
 ```
 
-## Chinese user guide
+## Chinese User Guide
 
-See `docs\autoshop-mcp-v1.2-user-guide.md` for a Chinese setup and usage guide.
+See `docs\autoshop-mcp-v1.4-user-guide.md` for a Chinese setup and usage guide.
 
-## Recommended workflow
+## Recommended Workflow
 
 When AutoShop is already open:
 
 1. Call `autoshop_detect_open_instances`.
 2. Call `autoshop_scan_active_project`.
-3. Call `autoshop_analyze_call_graph`.
-4. Use `autoshop_list_program_blocks`, `autoshop_read_block_source`, `autoshop_search_symbols`, and `autoshop_parse_variable_tables`.
+3. Call `autoshop_run_capability_self_test`.
+4. Call `autoshop_analyze_call_graph`.
+5. Call `autoshop_inspect_project_health`.
+6. Export a snapshot with `autoshop_export_project_snapshot` before larger AI-assisted work.
+7. Use `autoshop_list_program_blocks`, `autoshop_read_block_source`, `autoshop_search_symbols`, and `autoshop_parse_variable_tables`.
 
-The core project tools can omit `projectPath`; they will use the active AutoShop window. `autoshop_read_block_source` can also omit `blockName`; it will read the active block shown in the AutoShop title bar.
-
-Tested active project:
+The core project tools can omit `projectPath`; they will select an open AutoShop project. When multiple AutoShop projects are open, pass `projectName`, for example:
 
 ```json
 {
-  "projectPath": "D:\\牧哲\\1、程序\\镜像\\抛光\\PLC\\111",
+  "projectName": "6.10",
+  "response_format": "markdown"
+}
+```
+
+`autoshop_read_block_source` can also omit `blockName`; it reads the active block shown in the AutoShop title bar.
+
+## Tested Project
+
+```json
+{
+  "autoShopVersion": "4.12.0.0.B30",
+  "projectPath": "D:\\牧哲\\1、程序\\镜像\\抛光\\PLC\\6.10",
   "activeBlock": "MAIN",
-  "plcIp": "192.168.250.3"
+  "plcIp": "192.168.250.3",
+  "programs": 67,
+  "callEdges": 66,
+  "unresolvedCalls": 0,
+  "healthChecks": "7 ok, 1 warning"
 }
 ```
 
@@ -108,4 +136,4 @@ AutoShop `.LD` and `.FB` files are proprietary binary containers. The project to
 
 ## Safety
 
-Project inspection tools are read-only. Live write operations require `confirmRisk=true`.
+Project inspection, call graph, health checks, and snapshot export do not modify AutoShop project files. Snapshot export only writes files to the chosen output folder. Live write operations require `confirmRisk=true`.

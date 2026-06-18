@@ -194,12 +194,19 @@ export interface AutoShopOpenInstance {
   processName: string;
   executablePath?: string;
   mainWindowTitle: string;
+  isForeground?: boolean;
   productVersion?: string;
   projectPath?: string;
   projectName?: string;
   activeBlock?: string;
   projectExists: boolean;
   startedAt?: string;
+}
+
+export interface AutoShopContextSelector {
+  projectPath?: string;
+  projectName?: string;
+  windowTitleContains?: string;
 }
 
 export interface AutoShopCommunicationConfig {
@@ -234,4 +241,11 @@ export interface AutoShopCallGraphEdge {
   to: string;
   resolved: boolean;
   targetFile?: string;
+}
+
+export interface AutoShopHealthCheck {
+  id: string;
+  severity: "ok" | "warning" | "error";
+  message: string;
+  evidence?: Record<string, string | number | boolean | string[]>;
 }

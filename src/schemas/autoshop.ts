@@ -2,6 +2,12 @@ import { z } from "zod";
 
 export const responseFormatSchema = z.enum(["markdown", "json"]).default("markdown");
 
+const projectSelectorFields = {
+  projectPath: z.string().min(1).optional().describe("Optional AutoShop project directory. If omitted, the MCP selects an open AutoShop project."),
+  projectName: z.string().min(1).max(160).optional().describe("Optional open AutoShop project name filter, for example 6.10 or 1#PLC."),
+  windowTitleContains: z.string().min(1).max(240).optional().describe("Optional AutoShop window-title substring filter, useful when multiple AutoShop instances are open."),
+};
+
 export const pointDefinitionSchema = z.object({
   name: z.string().min(1).max(120).describe("Point symbol name, for example StartButton or MotorRun."),
   area: z.enum(["coil", "discrete_input", "holding_register", "input_register"]).describe("Modbus area for the point."),
@@ -66,16 +72,19 @@ export const bootstrapInputSchema = z.object({
 }).strict();
 
 export const detectOpenInstancesInputSchema = z.object({
+  projectName: projectSelectorFields.projectName,
+  windowTitleContains: projectSelectorFields.windowTitleContains,
   response_format: responseFormatSchema,
 }).strict();
 
 export const scanActiveProjectInputSchema = z.object({
+  ...projectSelectorFields,
   includeFiles: z.boolean().default(false).describe("Include the full top-level file list in the response."),
   response_format: responseFormatSchema,
 }).strict();
 
 export const capabilitySelfTestInputSchema = z.object({
-  projectPath: z.string().min(1).optional().describe("Optional AutoShop project directory. Defaults to the project shown in the active AutoShop window."),
+  ...projectSelectorFields,
   installPath: z.string().min(1).optional().describe("Optional AutoShop install directory. Defaults to the running AutoShop executable directory or the standard install path."),
   response_format: responseFormatSchema,
 }).strict();
@@ -89,19 +98,19 @@ export const instructionCatalogInputSchema = z.object({
 }).strict();
 
 export const analyzeCallGraphInputSchema = z.object({
-  projectPath: z.string().min(1).optional().describe("AutoShop project directory. Defaults to the project shown in the active AutoShop window."),
+  ...projectSelectorFields,
   maxBlocks: z.number().int().min(1).max(1000).default(250).describe("Maximum program blocks to inspect."),
   response_format: responseFormatSchema,
 }).strict();
 
 export const scanProjectInputSchema = z.object({
-  projectPath: z.string().min(1).describe("AutoShop project directory, for example D:\\\\Project\\\\PLC\\\\111."),
+  ...projectSelectorFields,
   includeFiles: z.boolean().default(false).describe("Include the full top-level file list in the response."),
   response_format: responseFormatSchema,
 }).strict();
 
 export const listProgramBlocksInputSchema = z.object({
-  projectPath: z.string().min(1).optional().describe("Optional AutoShop project directory. Defaults to the project shown in the active AutoShop window."),
+  ...projectSelectorFields,
   language: z.enum(["LD", "ST", "FB", "all"]).default("all").describe("Filter by block file type."),
   limit: z.number().int().min(1).max(500).default(50),
   offset: z.number().int().min(0).default(0),
@@ -109,7 +118,7 @@ export const listProgramBlocksInputSchema = z.object({
 }).strict();
 
 export const readBlockSourceInputSchema = z.object({
-  projectPath: z.string().min(1).optional().describe("Optional AutoShop project directory. Defaults to the project shown in the active AutoShop window."),
+  ...projectSelectorFields,
   blockName: z.string().min(1).max(240).optional().describe("Block name or file name. Defaults to the active block shown in the AutoShop window, for example MAIN."),
   includeRawStrings: z.boolean().default(false).describe("Include extracted strings from binary AutoShop block containers."),
   maxStrings: z.number().int().min(1).max(1000).default(300),
@@ -117,7 +126,7 @@ export const readBlockSourceInputSchema = z.object({
 }).strict();
 
 export const searchSymbolsInputSchema = z.object({
-  projectPath: z.string().min(1).optional().describe("Optional AutoShop project directory. Defaults to the project shown in the active AutoShop window."),
+  ...projectSelectorFields,
   query: z.string().min(1).max(120).describe("Symbol, address, instruction, or Chinese comment text to search for."),
   fileTypes: z.array(z.enum(["blocks", "variables", "config"])).optional().describe("File groups to search. Defaults to blocks, variables, and config."),
   limit: z.number().int().min(1).max(500).default(50),
@@ -126,12 +135,23 @@ export const searchSymbolsInputSchema = z.object({
 }).strict();
 
 export const parseVariableTablesInputSchema = z.object({
-  projectPath: z.string().min(1).optional().describe("Optional AutoShop project directory. Defaults to the project shown in the active AutoShop window."),
+  ...projectSelectorFields,
   tableName: z.string().min(1).max(120).optional().describe("Optional table/file name filter, for example 变量表, M_地址变量, or VarList."),
   query: z.string().min(1).max(120).optional().describe("Optional text/address filter inside extracted variable records."),
   limit: z.number().int().min(1).max(500).default(100),
   offset: z.number().int().min(0).default(0),
   response_format: responseFormatSchema,
+}).strict();
+
+export const inspectProjectHealthInputSchema = z.object({
+  ...projectSelectorFields,
+  maxBlocks: z.number().int().min(1).max(1000).default(250).describe("Maximum program blocks to inspect for call graph and health checks."),
+  variableLimit: z.number().int().min(1).max(5000).default(500).describe("Maximum variable records to sample."),
+  response_format: responseFormatSchema,
+}).strict();
+
+export const exportProjectSnapshotInputSchema = inspectProjectHealthInputSchema.extend({
+  outputDirectory: z.string().min(1).optional().describe("Directory where snapshot JSON and Markdown files should be written."),
 }).strict();
 
 export const validatePointTableInputSchema = z.object({
