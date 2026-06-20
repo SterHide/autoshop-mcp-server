@@ -1,66 +1,88 @@
-# AutoShop MCP quickstart v1.4
+# AutoShop MCP quickstart v1.5
 
 ## Scope
 
-AutoShop MCP follows the workflow shape of TIA Portal Openness MCP where practical:
+AutoShop MCP v1.5 is optimized for one primary workflow: help a PLC beginner understand an open AutoShop project.
 
 - L0: bootstrap, open-instance discovery, capability self-test
-- L1: active project scan, block listing, block reading, call graph, health checks, symbol search, variable parsing, snapshot export
-- L2: ST/ladder artifact generation, point-table validation, Modbus live point access
+- L1: beginner project guide, beginner block guide, active project scan, block listing, block reading, call graph, health checks, symbol search, variable parsing, snapshot export
+- L2: ST/ladder review artifact generation, point-table validation, Modbus live point access
 
-Unlike TIA Portal Openness, no confirmed public AutoShop automation API was found. This MCP does not directly edit AutoShop project internals or drive hidden IDE APIs. LD/FB files are proprietary binary containers, so the server performs read-only extraction of readable calls, symbols, comments, and instructions.
+Unlike TIA Portal Openness, no confirmed public AutoShop automation API was found. This MCP does not directly edit AutoShop project internals or drive hidden IDE APIs.
 
-## Current AutoShop Workflow
+## Beginner Workflow
 
 1. Open AutoShop and the target project.
 2. Call `autoshop_detect_open_instances`.
-3. If multiple projects are open, pass `projectName`, `windowTitleContains`, or `projectPath`.
-4. Call `autoshop_scan_active_project`.
-5. Call `autoshop_run_capability_self_test`.
-6. Call `autoshop_analyze_call_graph`.
-7. Call `autoshop_inspect_project_health`.
-8. Use `autoshop_export_project_snapshot` before larger AI-assisted edits.
-9. Use the project tools:
-   - `autoshop_list_program_blocks`
-   - `autoshop_read_block_source`
+3. If multiple projects are open, choose the exact `projectName`, `windowTitleContains`, or `projectPath`.
+4. Call `autoshop_explain_project_for_beginner`.
+5. Call `autoshop_explain_block_for_beginner` with `blockName: "MAIN"`.
+6. Follow the returned `next_questions` and `suggested_next_steps`.
+7. Use lower-level tools only when needed:
+   - `autoshop_analyze_call_graph`
    - `autoshop_search_symbols`
    - `autoshop_parse_variable_tables`
+   - `autoshop_read_block_source`
 
-`autoshop_read_block_source` can omit `blockName`; it reads the active block from the AutoShop window title.
+## Project Selection Safety
 
-## Project Selection
-
-Most project tools accept the same selector fields:
+Most project tools accept:
 
 ```json
 {
-  "projectName": "6.10",
-  "windowTitleContains": "抛光\\PLC\\6.10",
-  "projectPath": "D:\\牧哲\\1、程序\\镜像\\抛光\\PLC\\6.10"
+  "projectName": "6#PLC",
+  "windowTitleContains": "6-8\\6#PLC",
+  "projectPath": "D:\\牧哲\\1、程序\\触摸屏中译英\\6-8(2)\\6-8\\6#PLC"
 }
 ```
 
-Selector priority is explicit argument first, then environment variables, then foreground AutoShop project, then newest valid AutoShop project.
+v1.5 changes selector behavior: if an explicit selector does not match an open AutoShop project, the tool returns an error and lists available projects. It no longer silently falls back to another open project.
 
-Supported environment variables:
+## Beginner Tool Examples
 
-- `AUTOSHOP_PROJECT_PATH`
-- `AUTOSHOP_PROJECT_NAME`
-- `AUTOSHOP_WINDOW_TITLE`
+Explain the selected project:
+
+```json
+{
+  "projectName": "6#PLC",
+  "maxBlocks": 250,
+  "variableLimit": 80,
+  "response_format": "markdown"
+}
+```
+
+Explain `MAIN`:
+
+```json
+{
+  "projectName": "6#PLC",
+  "blockName": "MAIN",
+  "response_format": "markdown"
+}
+```
+
+Search for start/stop/alarm clues:
+
+```json
+{
+  "projectName": "6#PLC",
+  "query": "报警",
+  "limit": 20,
+  "response_format": "markdown"
+}
+```
 
 ## Local Validation
 
 Validated against open AutoShop V4.12.0.0.B30 projects:
 
 - Detected AutoShop instances: 3
-- Selected project: `D:\牧哲\1、程序\镜像\抛光\PLC\6.10`
+- Selected project in smoke test: `6#PLC`
 - Active block: `MAIN`
-- Configured PLC IP: `192.168.250.3`
-- Project scan: 67 program blocks, 64 LD blocks, 3 ST blocks, 2 FB blocks, 26 variable tables
-- CALL graph: 69 blocks scanned, 66 CALL edges, 0 unresolved calls
-- Health checks: 8 checks, 7 ok, 1 warning
-- Snapshot export: JSON and Markdown artifacts generated through MCP
-- Instruction catalog: read from `D:\Inovance Control\AutoShop\AIAssistantELinkCmd.xml`
+- Tool count: 22
+- Beginner project guide: returned `MAIN` and MAIN CALL reading order
+- Beginner block guide: explained `MAIN`, returned instruction hints and symbol hints
+- Strict selector guard: passing a nonexistent `projectName` returns MCP `isError: true` with available project names
 
 ## Safety
 

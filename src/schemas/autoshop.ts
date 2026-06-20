@@ -154,6 +154,20 @@ export const exportProjectSnapshotInputSchema = inspectProjectHealthInputSchema.
   outputDirectory: z.string().min(1).optional().describe("Directory where snapshot JSON and Markdown files should be written."),
 }).strict();
 
+export const explainProjectForBeginnerInputSchema = z.object({
+  ...projectSelectorFields,
+  maxBlocks: z.number().int().min(1).max(1000).default(250).describe("Maximum program blocks to inspect for the beginner overview."),
+  variableLimit: z.number().int().min(1).max(500).default(80).describe("Maximum variable records to sample for beginner hints."),
+  response_format: responseFormatSchema,
+}).strict();
+
+export const explainBlockForBeginnerInputSchema = z.object({
+  ...projectSelectorFields,
+  blockName: z.string().min(1).max(240).optional().describe("Block name or file name. Defaults to the active block shown in the AutoShop window, for example MAIN."),
+  maxStrings: z.number().int().min(1).max(1000).default(500).describe("Maximum strings to extract from binary LD/FB containers."),
+  response_format: responseFormatSchema,
+}).strict();
+
 export const validatePointTableInputSchema = z.object({
   points: z.array(pointDefinitionSchema).optional().describe("Inline point definitions."),
   pointTablePath: z.string().optional().describe("Path to a JSON or CSV point table."),

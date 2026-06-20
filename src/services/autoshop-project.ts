@@ -521,7 +521,7 @@ function summarizeInstructions(strings: string[]): AutoShopInstructionSummary {
   const symbolPattern = /\b(?:[MXYSDRBTCVZ]\d+(?:\.\d+)?|K\d+|T\d+|C\d+)\b/giu;
   const instructions = unique(strings.map((line) => line.match(instructionPattern)?.[0]).filter(isString), 200);
   const calls = unique(instructions.filter((line) => /^CALL\s+/i.test(line)).map((line) => line.replace(/^CALL\s+/i, "").trim()), 100);
-  const comments = unique(strings.filter((line) => /网络注释|注释|参数|报警|流程|模式|初始化|通讯|电机|抛光/.test(line)), 100);
+  const comments = unique(strings.filter((line) => /网络注释|注释|参数|报警|流程|模式|初始化|通讯|电机|抛光|启动|停止|故障|复位|手动|自动/.test(line)), 100);
   const symbols = unique(strings.flatMap((line) => line.match(symbolPattern) ?? []), 200);
 
   return {

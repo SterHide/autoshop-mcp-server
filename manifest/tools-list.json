@@ -1,21 +1,33 @@
 {
   "package": "autoshop-mcp-server",
-  "version": "1.4.0",
-  "generatedAt": "2026-06-18",
-  "toolCount": 20,
+  "version": "1.5.0",
+  "generatedAt": "2026-06-20",
+  "toolCount": 22,
   "note": "Static snapshot. Runtime tools/list remains authoritative when the MCP server is running.",
   "tools": [
     {
       "name": "autoshop_bootstrap",
       "layer": "L0",
       "domain": "Bootstrap",
-      "description": "Read-only orientation for supported AutoShop workflows, generated artifacts, project health checks, snapshots, and live communication options."
+      "description": "Read-only orientation for supported AutoShop workflows, beginner explanations, project health checks, snapshots, and live communication options."
     },
     {
       "name": "autoshop_detect_open_instances",
       "layer": "L0",
       "domain": "Runtime",
       "description": "Detect running AutoShop windows and parse project path, active block, version, process path, foreground status, and selected default instance."
+    },
+    {
+      "name": "autoshop_explain_project_for_beginner",
+      "layer": "L1",
+      "domain": "BeginnerGuide",
+      "description": "Explain the selected AutoShop project for a PLC beginner: where to start, MAIN calls, program areas, variable hints, glossary, and next questions."
+    },
+    {
+      "name": "autoshop_explain_block_for_beginner",
+      "layer": "L1",
+      "domain": "BeginnerGuide",
+      "description": "Explain one AutoShop block for a PLC beginner: block role, LD/ST/FB meaning, CALLs, common instructions, symbols, and next steps."
     },
     {
       "name": "autoshop_scan_active_project",

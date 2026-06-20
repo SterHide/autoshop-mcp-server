@@ -5,6 +5,8 @@ import {
   analyzeCallGraphInputSchema,
   bootstrapInputSchema,
   capabilitySelfTestInputSchema,
+  explainBlockForBeginnerInputSchema,
+  explainProjectForBeginnerInputSchema,
   exportProjectSnapshotInputSchema,
   detectOpenInstancesInputSchema,
   generateLadderInputSchema,
@@ -24,6 +26,7 @@ import {
   writePointsInputSchema,
 } from "../schemas/autoshop.js";
 import { analyzeCallGraph } from "../services/autoshop-analysis.js";
+import { explainBlockForBeginner, explainProjectForBeginner } from "../services/autoshop-beginner.js";
 import { exportProjectSnapshot, inspectProjectHealth } from "../services/autoshop-health.js";
 import { listBlocks, parseVariableTables, readBlock, scanProject, searchSymbols } from "../services/autoshop-project.js";
 import { detectAutoShopInstances, getActiveAutoShopInstance, getActiveAutoShopProjectPath, pathExists, readInstructionCatalog, readProjectCommunicationConfig } from "../services/autoshop-runtime.js";
@@ -57,6 +60,8 @@ export function registerAutoshopTools(server: McpServer): void {
         supported_protocols: [...SUPPORTED_PROTOCOLS],
         recommended_next_tools: [
           "autoshop_detect_open_instances",
+          "autoshop_explain_project_for_beginner",
+          "autoshop_explain_block_for_beginner",
           "autoshop_scan_active_project",
           "autoshop_run_capability_self_test",
           "autoshop_scan_project",
@@ -87,12 +92,13 @@ export function registerAutoshopTools(server: McpServer): void {
           `- Supported live protocols: ${SUPPORTED_PROTOCOLS.join(", ")}`,
           "- Recommended flow:",
           "  1. detect the open AutoShop instance or scan the active project",
-          "  2. list/read program blocks, analyze the call graph, and run project health checks",
-          "  3. search symbols and parse variable tables",
-          "  4. export a project snapshot before larger AI-assisted changes",
-          "  5. consult the AutoShop instruction catalog for available commands",
-          "  6. generate ST source or ladder rungs for manual implementation",
-          "  7. use Modbus TCP tools for live read/write when needed",
+          "  2. explain the project for a PLC beginner, then explain MAIN or a selected block",
+          "  3. list/read program blocks, analyze the call graph, and run project health checks",
+          "  4. search symbols and parse variable tables",
+          "  5. export a project snapshot before larger AI-assisted changes",
+          "  6. consult the AutoShop instruction catalog for available commands",
+          "  7. generate ST source or ladder rungs for manual implementation",
+          "  8. use Modbus TCP tools for live read/write when needed",
         ],
       );
 
@@ -136,6 +142,124 @@ export function registerAutoshopTools(server: McpServer): void {
             : instances.map((instance) =>
                 `- PID ${instance.processId}${instance.processId === selectedInstance?.processId ? " (selected)" : ""}: ${instance.productVersion ?? "unknown version"}, foreground=${instance.isForeground ? "yes" : "no"}, project=${instance.projectPath ?? "not detected"}, active=${instance.activeBlock ?? "unknown"}`,
               )),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_explain_project_for_beginner",
+    {
+      title: "Explain AutoShop Project For Beginner",
+      description: "Read-only beginner guide for the selected AutoShop project. Explains where to start, what MAIN calls, how blocks are grouped, which variables look important, and what a PLC beginner should ask next.",
+      inputSchema: explainProjectForBeginnerInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ projectPath, projectName, windowTitleContains, maxBlocks, variableLimit, response_format }) => {
+      const effectiveProjectPath = await resolveProjectPath({ projectPath, projectName, windowTitleContains });
+      const result = await explainProjectForBeginner({ projectPath: effectiveProjectPath, maxBlocks, variableLimit });
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Beginner Project Guide",
+        result as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Project: ${result.project_name}`,
+          `- Path: ${result.project_path}`,
+          `- Start here: ${result.read_this_first.slice(0, 8).join(" -> ") || "MAIN"}`,
+          `- Programs: ${result.structure.program_count} (${result.structure.ladder_blocks} LD, ${result.structure.st_blocks} ST, ${result.structure.function_blocks} FB)`,
+          ...(result.communication?.ip ? [`- PLC IP: ${result.communication.ip}`] : []),
+          "",
+          "## Plain Explanation",
+          ...result.beginner_summary.map((line) => `- ${line}`),
+          "",
+          "## MAIN Calls",
+          ...(result.program_flow.main_calls.length > 0
+            ? result.program_flow.main_calls.slice(0, 40).map((call) => `- ${call.order}. ${call.block}: ${call.plain_meaning}`)
+            : ["- No CALL instructions were extracted from MAIN."]),
+          "",
+          "## Program Areas",
+          ...result.program_areas.slice(0, 12).map((area) => `- ${area.area}: ${area.plain_meaning} (${area.blocks.slice(0, 8).join(", ")})`),
+          "",
+          "## Variable Hints",
+          ...(result.variable_hints.length > 0
+            ? result.variable_hints.slice(0, 20).map((hint) => `- ${hint.address ?? hint.file}: ${hint.text} - ${hint.plain_meaning}`)
+            : ["- No variable hints were extracted."]),
+          "",
+          "## Good Next Questions",
+          ...result.next_questions.map((question) => `- ${question}`),
+          ...result.warnings.map((warning) => `- Warning: ${warning}`),
+        ],
+      );
+      return {
+        content: [{ type: "text", text }],
+        structuredContent,
+      };
+    },
+  );
+
+  server.registerTool(
+    "autoshop_explain_block_for_beginner",
+    {
+      title: "Explain AutoShop Block For Beginner",
+      description: "Read-only beginner explanation for one AutoShop block. Explains the block role, LD/ST/FB language, called subroutines, common PLC instructions, symbols such as X/Y/M/D/T/C, and next reading steps.",
+      inputSchema: explainBlockForBeginnerInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ projectPath, projectName, windowTitleContains, blockName, maxStrings, response_format }) => {
+      const activeInstance = !projectPath || !blockName ? await getActiveAutoShopInstance({ projectPath, projectName, windowTitleContains }) : undefined;
+      const effectiveProjectPath = projectPath ?? activeInstance?.projectPath ?? await getActiveAutoShopProjectPath({ projectName, windowTitleContains });
+      const effectiveBlockName = blockName ?? activeInstance?.activeBlock;
+      if (!effectiveBlockName) {
+        throw new Error("No blockName was supplied and no active block was detected from the AutoShop window title. Pass blockName explicitly, for example MAIN.");
+      }
+      const result = await explainBlockForBeginner({ projectPath: effectiveProjectPath, blockName: effectiveBlockName, maxStrings });
+      const { text, structuredContent } = formatResult(
+        response_format,
+        "AutoShop Beginner Block Guide",
+        result as unknown as Record<string, unknown>,
+        [
+          "",
+          `- Block: ${result.block.name}`,
+          `- File: ${result.block.file}`,
+          `- Language: ${result.block.language}`,
+          `- Role: ${result.role}`,
+          "",
+          "## Plain Explanation",
+          ...result.beginner_summary.map((line) => `- ${line}`),
+          "",
+          "## Calls",
+          ...(result.calls.length > 0
+            ? result.calls.slice(0, 40).map((call) => `- ${call.block}: ${call.plain_meaning}`)
+            : ["- No child block calls were extracted."]),
+          "",
+          "## Instruction Hints",
+          ...(result.instruction_hints.length > 0
+            ? result.instruction_hints.slice(0, 30).map((hint) => `- ${hint.instruction}: ${hint.plain_meaning}`)
+            : ["- No common instruction hints were extracted."]),
+          "",
+          "## Symbol Hints",
+          ...(result.symbol_hints.length > 0
+            ? result.symbol_hints.slice(0, 30).map((hint) => `- ${hint.symbol}: ${hint.plain_meaning}`)
+            : ["- No common address symbols were extracted."]),
+          "",
+          "## Suggested Next Steps",
+          ...result.suggested_next_steps.map((step) => `- ${step}`),
+          ...result.warnings.map((warning) => `- Warning: ${warning}`),
         ],
       );
       return {

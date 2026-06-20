@@ -80,8 +80,16 @@ export async function getActiveAutoShopInstance(selector: AutoShopContextSelecto
 }
 
 export async function getActiveAutoShopProjectPath(selector: AutoShopContextSelector = {}): Promise<string> {
-  const active = await getActiveAutoShopInstance(selector);
-  if (!active?.projectPath) {
+  const instances = await detectAutoShopInstances();
+  const active = selectAutoShopInstance(instances, selector);
+  if (!active) {
+    const selection = describeSelector(selector);
+    const choices = instances
+      .map((instance) => `${instance.projectName ?? "unknown"} (PID ${instance.processId}, ${instance.projectPath ?? "no project path"})`)
+      .join("; ");
+    throw new Error(`No open AutoShop project matched ${selection}. Available projects: ${choices || "none"}. Use autoshop_detect_open_instances first, then pass an exact projectName or projectPath.`);
+  }
+  if (!active.projectPath) {
     throw new Error("No open AutoShop project was detected. Open a project in AutoShop or pass projectPath explicitly.");
   }
   if (!active.projectExists) {
@@ -101,37 +109,62 @@ export function selectAutoShopInstance(
   const envProjectName = process.env.AUTOSHOP_PROJECT_NAME?.trim().toLowerCase();
   const envTitle = process.env.AUTOSHOP_WINDOW_TITLE?.trim().toLowerCase();
 
-  const matchers: Array<(instance: AutoShopOpenInstance) => boolean> = [];
+  const explicitMatchers: Array<(instance: AutoShopOpenInstance) => boolean> = [];
   if (normalizedSelectorPath) {
-    matchers.push((instance) => Boolean(instance.projectPath && path.normalize(instance.projectPath).toLowerCase() === normalizedSelectorPath));
+    explicitMatchers.push((instance) => Boolean(instance.projectPath && path.normalize(instance.projectPath).toLowerCase() === normalizedSelectorPath));
   }
   if (selectorProjectName) {
-    matchers.push((instance) => instance.projectName?.toLowerCase() === selectorProjectName);
+    explicitMatchers.push((instance) => instance.projectName?.toLowerCase() === selectorProjectName);
   }
   if (selectorTitle) {
-    matchers.push((instance) => instance.mainWindowTitle.toLowerCase().includes(selectorTitle));
+    explicitMatchers.push((instance) => instance.mainWindowTitle.toLowerCase().includes(selectorTitle));
   }
-  if (envProjectPath) {
-    matchers.push((instance) => Boolean(instance.projectPath && path.normalize(instance.projectPath).toLowerCase() === envProjectPath));
-  }
-  if (envProjectName) {
-    matchers.push((instance) => instance.projectName?.toLowerCase() === envProjectName);
-  }
-  if (envTitle) {
-    matchers.push((instance) => instance.mainWindowTitle.toLowerCase().includes(envTitle));
+  const explicitMatch = findFirstMatch(instances, explicitMatchers);
+  if (explicitMatchers.length > 0) {
+    return explicitMatch;
   }
 
-  for (const matcher of matchers) {
-    const matched = instances.find((instance) => matcher(instance));
-    if (matched) {
-      return matched;
-    }
+  const environmentMatchers: Array<(instance: AutoShopOpenInstance) => boolean> = [];
+  if (envProjectPath) {
+    environmentMatchers.push((instance) => Boolean(instance.projectPath && path.normalize(instance.projectPath).toLowerCase() === envProjectPath));
+  }
+  if (envProjectName) {
+    environmentMatchers.push((instance) => instance.projectName?.toLowerCase() === envProjectName);
+  }
+  if (envTitle) {
+    environmentMatchers.push((instance) => instance.mainWindowTitle.toLowerCase().includes(envTitle));
+  }
+  const environmentMatch = findFirstMatch(instances, environmentMatchers);
+  if (environmentMatchers.length > 0) {
+    return environmentMatch;
   }
 
   return instances.find((instance) => instance.isForeground && instance.projectExists) ??
     instances.find((instance) => instance.isForeground) ??
     instances.find((instance) => instance.projectExists) ??
     instances[0];
+}
+
+function findFirstMatch(
+  instances: AutoShopOpenInstance[],
+  matchers: Array<(instance: AutoShopOpenInstance) => boolean>,
+): AutoShopOpenInstance | undefined {
+  for (const matcher of matchers) {
+    const matched = instances.find((instance) => matcher(instance));
+    if (matched) {
+      return matched;
+    }
+  }
+  return undefined;
+}
+
+function describeSelector(selector: AutoShopContextSelector): string {
+  const parts = [
+    selector.projectPath ? `projectPath="${selector.projectPath}"` : undefined,
+    selector.projectName ? `projectName="${selector.projectName}"` : undefined,
+    selector.windowTitleContains ? `windowTitleContains="${selector.windowTitleContains}"` : undefined,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : "the default AutoShop selection";
 }
 
 export async function readProjectCommunicationConfig(projectPath: string): Promise<AutoShopCommunicationConfig | undefined> {
