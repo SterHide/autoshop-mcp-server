@@ -158,7 +158,7 @@ export async function explainBlockForBeginner(options: ExplainBlockForBeginnerOp
     projectPath,
     blockName: options.blockName,
     includeRawStrings: false,
-    maxStrings: options.maxStrings ?? 500,
+    maxStrings: options.maxStrings,
   });
   const block = source.block;
   const calls = source.summary.calls.slice(0, 50).map((call) => ({

@@ -1,6 +1,6 @@
 {
   "name": "autoshop-mcp-server",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "MCP server for Inovance AutoShop engineering workflows, ladder logic generation, and PLC communication",
   "type": "module",
   "main": "dist/index.js",

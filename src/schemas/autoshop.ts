@@ -121,7 +121,7 @@ export const readBlockSourceInputSchema = z.object({
   ...projectSelectorFields,
   blockName: z.string().min(1).max(240).optional().describe("Block name or file name. Defaults to the active block shown in the AutoShop window, for example MAIN."),
   includeRawStrings: z.boolean().default(false).describe("Include extracted strings from binary AutoShop block containers."),
-  maxStrings: z.number().int().min(1).max(1000).default(300),
+  maxStrings: z.number().int().min(1).optional().describe("Optional maximum strings to extract from binary LD/FB containers. Omit for unlimited extraction."),
   response_format: responseFormatSchema,
 }).strict();
 
@@ -164,7 +164,7 @@ export const explainProjectForBeginnerInputSchema = z.object({
 export const explainBlockForBeginnerInputSchema = z.object({
   ...projectSelectorFields,
   blockName: z.string().min(1).max(240).optional().describe("Block name or file name. Defaults to the active block shown in the AutoShop window, for example MAIN."),
-  maxStrings: z.number().int().min(1).max(1000).default(500).describe("Maximum strings to extract from binary LD/FB containers."),
+  maxStrings: z.number().int().min(1).optional().describe("Optional maximum strings to extract from binary LD/FB containers. Omit for unlimited extraction."),
   response_format: responseFormatSchema,
 }).strict();
 

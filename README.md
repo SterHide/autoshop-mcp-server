@@ -1,4 +1,4 @@
-# autoshop-mcp-server v1.5
+# autoshop-mcp-server v1.5.1
 
 MCP server for helping users understand and inspect Inovance AutoShop PLC projects.
 
@@ -22,6 +22,12 @@ AutoShop does not expose a confirmed Openness-style public automation API. This 
 - New `autoshop_explain_block_for_beginner` tool: explains one block's role, LD/ST/FB meaning, CALLs, common instructions, and address symbols.
 - Safer multi-project selection: if `projectName`, `projectPath`, or `windowTitleContains` is explicitly provided but does not match an open AutoShop project, the MCP returns an error with available projects instead of silently falling back.
 - Better Chinese comment keyword extraction for beginner explanations.
+
+## v1.5.1 Patch
+
+- `autoshop_read_block_source` now reads LD/FB binary strings without the old default `maxStrings` cap.
+- The optional `maxStrings` parameter remains available when callers want an explicit temporary limit.
+- Block previews and extracted instruction/call/symbol summaries no longer apply the previous read-block truncation.
 
 ## Tools
 

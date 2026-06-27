@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CHARACTER_LIMIT } from "../constants.js";
 import {
   AutoShopBlockInfo,
   AutoShopFolderEntry,
@@ -181,9 +180,10 @@ export async function readBlock(options: ReadBlockOptions): Promise<ReadBlockRes
   const block = await findBlock(projectPath, options.blockName, files, folderEntries);
   const buffer = await fs.readFile(block.path);
   const isText = isMostlyText(buffer);
-  const rawStrings = isText ? decodeTextFile(buffer).split(/\r?\n/) : extractUtf8Strings(buffer, options.maxStrings ?? MAX_STRING_COUNT);
+  const decodedText = isText ? decodeTextFile(buffer) : undefined;
+  const rawStrings = decodedText !== undefined ? decodedText.split(/\r?\n/) : extractUtf8Strings(buffer, options.maxStrings);
   const cleaned = rawStrings.map(cleanExtractedString).filter(isUsefulExtractedString);
-  const preview = truncateText(isText ? decodeTextFile(buffer) : cleaned.join("\n"), CHARACTER_LIMIT);
+  const preview = decodedText ?? cleaned.join("\n");
   const summary = summarizeInstructions(cleaned);
   const warnings = block.language === "LD" || block.language === "FB"
     ? ["AutoShop LD/FB files are proprietary binary containers. This tool extracts readable instructions and symbols, not a lossless ladder source export."]
@@ -194,7 +194,7 @@ export async function readBlock(options: ReadBlockOptions): Promise<ReadBlockRes
     block,
     source_kind: isText ? "text" : "binary_strings",
     text_preview: preview,
-    raw_strings: options.includeRawStrings ? cleaned.slice(0, options.maxStrings ?? MAX_STRING_COUNT) : undefined,
+    raw_strings: options.includeRawStrings ? limitStrings(cleaned, options.maxStrings) : undefined,
     summary,
     warnings,
   };
@@ -468,14 +468,14 @@ function decodeTextFile(buffer: Buffer): string {
   return decodeAutoShopText(buffer);
 }
 
-function extractUtf8Strings(buffer: Buffer, maxStrings: number): string[] {
+function extractUtf8Strings(buffer: Buffer, maxStrings?: number): string[] {
   const strings: string[] = [];
   let current: number[] = [];
 
   for (const byte of buffer) {
     if (byte === 0) {
       pushCurrent();
-      if (strings.length >= maxStrings) {
+      if (hasReachedStringLimit(strings, maxStrings)) {
         break;
       }
       continue;
@@ -495,7 +495,15 @@ function extractUtf8Strings(buffer: Buffer, maxStrings: number): string[] {
     }
   }
 
-  return strings.slice(0, maxStrings);
+  return limitStrings(strings, maxStrings);
+}
+
+function hasReachedStringLimit(strings: string[], maxStrings: number | undefined): boolean {
+  return maxStrings !== undefined && strings.length >= maxStrings;
+}
+
+function limitStrings<T>(strings: T[], maxStrings: number | undefined): T[] {
+  return maxStrings === undefined ? strings : strings.slice(0, maxStrings);
 }
 
 function cleanExtractedString(value: string): string {
@@ -519,10 +527,11 @@ function isUsefulExtractedString(value: string): boolean {
 function summarizeInstructions(strings: string[]): AutoShopInstructionSummary {
   const instructionPattern = /\b(CALL|LD[<>=]?|LD|SET|RST|MOV|STRMOV|TONR?|TOF|OUT|AND|OR|INCP|DEC|CMP|ADD|SUB|MUL|DIV)\b[^\r\n]*/iu;
   const symbolPattern = /\b(?:[MXYSDRBTCVZ]\d+(?:\.\d+)?|K\d+|T\d+|C\d+)\b/giu;
-  const instructions = unique(strings.map((line) => line.match(instructionPattern)?.[0]).filter(isString), 200);
-  const calls = unique(instructions.filter((line) => /^CALL\s+/i.test(line)).map((line) => line.replace(/^CALL\s+/i, "").trim()), 100);
-  const comments = unique(strings.filter((line) => /网络注释|注释|参数|报警|流程|模式|初始化|通讯|电机|抛光|启动|停止|故障|复位|手动|自动/.test(line)), 100);
-  const symbols = unique(strings.flatMap((line) => line.match(symbolPattern) ?? []), 200);
+  const commentPattern = /网络注释|注释|参数|报警|流程|模式|初始化|通讯|电机|抛光|启动|停止|故障|复位|手动|自动/;
+  const instructions = unique(strings.map((line) => line.match(instructionPattern)?.[0]).filter(isString));
+  const calls = unique(instructions.filter((line) => /^CALL\s+/i.test(line)).map((line) => line.replace(/^CALL\s+/i, "").trim()));
+  const comments = unique(strings.filter((line) => commentPattern.test(line)));
+  const symbols = unique(strings.flatMap((line) => line.match(symbolPattern) ?? []));
 
   return {
     instructions,
@@ -629,13 +638,6 @@ function paginate<T>(items: T[], requestedLimit: number, requestedOffset: number
   };
 }
 
-function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return `${text.slice(0, maxLength)}\n... TRUNCATED ...`;
-}
-
 async function readBufferSkippingLocked(filePath: string, warnings?: string[]): Promise<Buffer | undefined> {
   try {
     return await fs.readFile(filePath);
@@ -648,7 +650,7 @@ async function readBufferSkippingLocked(filePath: string, warnings?: string[]): 
   }
 }
 
-function unique<T>(values: T[], limit: number): T[] {
+function unique<T>(values: T[], limit?: number): T[] {
   const seen = new Set<T>();
   const result: T[] = [];
   for (const value of values) {
@@ -657,7 +659,7 @@ function unique<T>(values: T[], limit: number): T[] {
     }
     seen.add(value);
     result.push(value);
-    if (result.length >= limit) {
+    if (limit !== undefined && result.length >= limit) {
       break;
     }
   }
